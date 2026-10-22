@@ -1,6 +1,3 @@
-# Quantum-Transactions
-A TRU Quantum transaction with Core and Cli
-
 # TRU Quantum Transactions
 
 ## A first transaction with TRU Core and tru-cli
@@ -32,7 +29,7 @@ This walkthrough is for **Linux Bash**, a running local Core, `tru-cli`, and Pyt
 | A after funding | 990,000 | 0.00990000 |
 | B after the WOTS+ send | 980,000 | 0.00980000 |
 
-These are illustrative amounts, not a transaction receipt. Preparing the initial ordinary output has its own fee. The reviewed implementation requires at least 10,000 fee atoms and also checks wallet policy; a fee may need to be higher. Decide the fee **before signing**. Never create a differently signed WOTS transaction to bump its fee.
+These amounts also match the completed mainnet self-transfer documented below. Preparing the initial ordinary output has its own fee. The reviewed implementation requires at least 10,000 fee atoms and also checks wallet policy; a fee may need to be higher. Decide the fee **before signing**. Never create a differently signed WOTS transaction to bump its fee.
 
 ## 1. Connect to Core and make a private work folder
 
@@ -76,13 +73,13 @@ An output is identified by its transaction ID (`txid`) and output number (`vout`
 "$TRUCLI" sendtoaddress "$ORDINARY_ADDRESS" 0.01 --dry-run
 ```
 
-Review the dry-run result. Only if correct, send once:
+**The dry run checks syntax, the spending cap, and unlocked-wallet access only. It does not simulate UTXO selection or fees.** Review its result and stop on errors. If the destination and amount are correct, send once:
 
 ```bash
 "$TRUCLI" sendtoaddress "$ORDINARY_ADDRESS" 0.01
 ```
 
-Wait for confirmation, then run `listunspent` again. Select the **0.01-TRU output**, not the larger change output. If submission times out, inspect transaction history before sending again.
+Wait for confirmation, then query Core with `listunspent` again. If you saved its output to a JSON file, refresh that file before filtering it; rereading a saved file does not fetch new chain state. Select the **0.01-TRU output**, not the larger change output. If submission times out, inspect transaction history before sending again.
 
 Enter the selected outpoint. `vout` is not necessarily zero:
 
@@ -256,7 +253,7 @@ RECOVERED_HEX="$(python3 read-quantum-json.py quantum-recovered.json rawHex)" &&
   "$TRUCLI" decoderawtransaction "$RECOVERED_HEX"
 ```
 
-`retry` retrieves saved bytes; it does not broadcast. Check the decoded transaction ID using `gettransaction`, and inspect the mempool if needed. If it is already confirmed, do not submit again. If rebroadcast is needed, submit **only those exact saved bytes**:
+`retry` retrieves saved bytes; it does not broadcast. Use the transaction ID saved from submission to check `gettransaction`, and inspect the mempool if needed. In the observed 0.08.6 output, `decoderawtransaction` returned an empty top-level `txid`; do not treat that field as a usable ID. If no submission ID was captured, retain the exact saved bytes and investigate status before rebroadcasting; never create a different WOTS signature to recover an ID. If it is already confirmed, do not submit again. If rebroadcast is needed, submit **only those exact saved bytes**:
 
 ```bash
 "$TRUCLI" quantum submit "{\"txHex\":\"${RECOVERED_HEX:?Missing recovered hex}\"}"
@@ -303,20 +300,80 @@ RPC mapping: `receive/list/fund/send/exit/retry` use `quantumwallet` with an `ac
 "$TRUCLI" raw getconsensus09info '{}'
 ```
 
-## Example from the project operator's setup
+## Confirmed mainnet example — October 21, 2026
 
-The supplied gw878 transcript shows Core **0.08.6**, `active: true`, activation height **50,000**, candidate height **52,669**, and a working `quantum list` response. Its reported algorithm is `WOTS+ SHA2 n32 w16 len67 L-tree`, with 2,144-byte signatures.
+The project operator completed this self-transfer on **gw878 running TRU Core 0.08.6**, after mainnet PQ01 activation at height **50,000**. The supplied RPC results show funding, WOTS+ signing, submission, block inclusion, and a confirmed unspent destination output. The confirmation counts below are those observed in the transcript, not live counters.
 
-It also shows why a small output matters: the ordinary wallet had many roughly **50-TRU mining outputs** and a **one-atom output**. Neither is appropriate for this 0.01-TRU walkthrough. Typing the literal placeholder `YOUR_ORDINARY_WALLET_ADDRESS` produced an invalid-address error; use your own actual address.
+| Stage | Block | Amount in destination | Observed result |
+| --- | ---: | ---: | --- |
+| Ordinary self-payment to prepare the input | 52,685 | 0.01000000 TRU | Confirmed; selected output index 0 |
+| Ordinary-signature funding of quantum A | 52,690 | 0.00990000 TRU | Confirmed; 3 confirmations in the supplied check |
+| WOTS+ spend from quantum A to quantum B | **52,696** | **0.00980000 TRU** | **Confirmed; 1 confirmation in the supplied check** |
 
-**That transcript establishes setup and wallet access. It does not include a completed fund → WOTS+ send receipt.** The amount table above is a worked example. A confirmed transaction ID and block reference can be added here after the first completed transfer; never publish wallet files, seed phrases, private keys, sidecars, or reusable live signing-wallet copies.
+Each of the funding and WOTS+ spend transactions paid **0.00010000 TRU**. Together those two fees total **0.00020000 TRU**, excluding the earlier ordinary self-payment fee.
+
+### Public transaction references
+
+**Ordinary preparation transaction:**
+
+```text
+e53e542ca52f1083a1caea93602e9c1c14d4038fcc195578b7464f3a80bd7ce6
+```
+
+**Quantum funding transaction (A, output 0):**
+
+```text
+75450982cb6a094e5ccbfc977bb154908576c0f04ccc32a6124f0ea5188a9f78
+```
+
+**WOTS+ A → B transaction (B, output 0):**
+
+```text
+14ec11a1a75c4a9eb62e451a7d63489c85bba2ddaff06274523f1e59858d71ac
+```
+
+**Block 52,696 hash:**
+
+```text
+9b59418450e0e880eea7a25872239a2de32154ac6e85595a789c650100000000
+```
+
+The WOTS+ transaction returned `accepted: true` on submission. A subsequent `gettransaction` returned `active: true`, `txState: "CONFIRMED"`, `blockheight: 52696`, and `reorgSignal: false`. `quantum input` then returned **980000 atoms** at output 0, with B's expected script:
+
+```text
+512078bdf82aa24d22d83b8d1503ff1784ea4c39c96b4e10b0e7e7c8387912625a94200680696ffe2b4f598b7cd37b1f4c82e36c8e903a6b99650f68ded0b25e29b758bb51
+```
+
+### Verify the historical example on your own synchronized node
+
+These calls are read-only:
+
+```bash
+"$TRUCLI" gettransaction 14ec11a1a75c4a9eb62e451a7d63489c85bba2ddaff06274523f1e59858d71ac
+"$TRUCLI" getblockbyheight 52696
+```
+
+Compare the transaction's block reference with the block hash above. Current confirmations can differ, and reorganization can change active-chain inclusion. The successful `quantum input` result recorded here proves the output was available at that observation; if B is later spent, that input check will no longer succeed.
+
+**These transaction IDs and scripts are historical examples, not inputs or receiving addresses for a new tutorial run. Generate your own descriptors and select your own small output. Do not send funds to the example descriptors.**
+
+### Wallet state after the transfer
+
+| Descriptor | Reported state | Meaning |
+| --- | --- | --- |
+| A | `reserved_or_signed`; `has_saved_transaction: true` | A has signed its spending transaction. Preserve its state; never fund it again or sign a different transaction with it. |
+| B | `unused`; `has_saved_transaction: false` | B has received its payment but has not signed a spend. It is funded, not empty. Do not fund it again; spend to a fresh C when needed. |
+
+This demonstrates the **fund → WOTS+ sign → submit → confirm → receive** path on the operator's active mainnet chain. It does not establish independent verification by every peer or constitute an independent cryptographic audit. Keep current wallet and sidecar backups together; never publish seeds, private keys, wallet files, or sidecars.
 
 ## Troubleshooting
 
 | Message or symptom | What to do |
 | --- | --- |
 | Could not reach node | Check the Core process, RPC listener, and CLI configuration. A running P2P service does not establish that RPC is available. |
-| `active: false` | Wait for activation/synchronization; do not try to bypass the activation check. |
+| `active: false` in `getconsensus09info` | Wait for activation/synchronization; do not bypass the activation check. |
+| `active: false`, `txState: MEMPOOL`, zero confirmations in `gettransaction` | The transaction is not yet in the active chain. Wait for mining; this does not mean PQ01 activation is disabled. |
+| Empty `txid` in `decoderawtransaction` | Seen in the tested build. Use the ID returned by submission for confirmation checks; do not invent or guess an ID. |
 | Requires loopback / wallet-send enable | Use the local node and its operator-approved startup environment. Do not expose wallet signing through a public RPC service. |
 | Invalid address / invalid character | Replace placeholders with your own actual address; copy the entire descriptor without extra characters. |
 | Selected input exceeds cap | Prepare a small ordinary output; do not raise the cap just to use a mining reward for this tutorial. |
@@ -327,4 +384,4 @@ It also shows why a small output matters: the ordinary wallet had many roughly *
 
 ## Documentation basis
 
-Prepared for TRU Core 0.08.6 from the operator's supplied command transcript and the available quantum wallet implementation (`quantum_core_wallet_v1.inc`, `quantum_wallet_v1.h`, `quantum_chain_v1.h`, `rpc_server.cpp`, and `tru-cli.cpp`). This is an operational guide, not a claim of an independent cryptographic audit or a new executed mainnet test. No funds were moved while preparing this document.
+Prepared for TRU Core 0.08.6 from the operator's supplied command transcript and the available quantum wallet implementation (`quantum_core_wallet_v1.inc`, `quantum_wallet_v1.h`, `quantum_chain_v1.h`, `rpc_server.cpp`, and `tru-cli.cpp`). Updated with the operator-supplied mainnet transaction receipts for blocks 52,685, 52,690, and 52,696. The operator executed the transactions; preparation of this document performed no signing or broadcasting. This is an operational guide and recorded functional example, not an independent cryptographic audit.
